@@ -21,8 +21,11 @@ pub struct ScalerField<T> {
 
 /// Component of `MonoImage`
 pub type MonoImageItem = u16;
+pub type MonoImageItemBig = u32;
 /// Image with grayscale values
 pub type MonoImage = ScalerField<MonoImageItem>;
+pub type MonoImageBig = ScalerField<MonoImageItemBig>;
+
 
 /// Image with 4 bytes per pixel
 #[derive(Clone, Default)]

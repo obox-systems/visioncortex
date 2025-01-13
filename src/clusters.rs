@@ -1,6 +1,8 @@
 //! Algorithm to cluster a binary image
 
-use crate::{BinaryImage, BoundingRect, CompoundPath, MonoImage, MonoImageItem, PathI32, PathSimplifyMode, PointI32, Shape, Spline};
+use std::collections::HashMap;
+
+use crate::{BinaryImage, BoundingRect, CompoundPath, MonoImage, MonoImageBig, MonoImageItem, PathI32, PathSimplifyMode, PointI32, Shape, Spline};
 
 /// A cluster of binary image pixels
 #[derive(Default)]
@@ -10,10 +12,22 @@ pub struct Cluster {
     pub rect: BoundingRect,
 }
 
+#[derive(Default)]
+pub struct ClusterPack {
+    pub cluster: Cluster,
+    pub color: crate::Color,
+}
+
 /// A collection of clusters
 #[derive(Default)]
 pub struct Clusters {
     pub clusters: Vec<Cluster>,
+    pub rect: BoundingRect,
+}
+
+#[derive(Default)]
+pub struct ClustersPack {
+    pub clusters: Vec<ClusterPack>,
     pub rect: BoundingRect,
 }
 
@@ -345,6 +359,114 @@ impl BinaryImage {
         let clusters = clusters.into_iter().filter(|c| c.size() != 0).collect();
 
         Clusters { clusters, rect }
+    }
+
+    pub fn to_clusters_big(&self, diagonal: bool, clustermapbig : &mut MonoImageBig, cluster_index_offset : u32, col : crate::Color ) -> ClustersPack {
+        let mut clusters = Vec::<ClusterPack>::new();
+        let mut rect = BoundingRect::default();
+        let mut clustermap = MonoImage::new_w_h(self.width, self.height);
+        let mut clusterindex: MonoImageItem = 0;
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let pos = PointI32 { x: x as i32, y: y as i32 };
+                let v = self.get_pixel_safe(x as i32, y as i32);
+                let v_up = self.get_pixel_safe(x as i32, y as i32-1);
+                let v_left = self.get_pixel_safe(x as i32-1, y as i32);
+                let v_up_left = self.get_pixel_safe(x as i32-1, y as i32-1);
+                let mut cluster_up = if y > 0 { clustermap.get_pixel(x as usize, y as usize-1) } else { 0 };
+                let mut cluster_left = if x > 0 { clustermap.get_pixel(x as usize-1, y as usize) } else { 0 };
+                let cluster_up_left = if x > 0 && y > 0 { clustermap.get_pixel(x as usize-1, y as usize-1) } else { 0 };
+                if (v || diagonal) && v_up && v_left && cluster_left != cluster_up {
+                    if clusters[cluster_left as usize].cluster.size() <= clusters[cluster_up as usize].cluster.size() {
+                        combine_cluster(&mut clusters, &mut clustermap, cluster_left, cluster_up);
+                        if clusterindex > 0 &&
+                            cluster_left == clusterindex - 1 &&
+                            clusterindex as usize == clusters.len() {
+                            // reduce cluster counts
+                            clusterindex -= 1;
+                        }
+                        cluster_left = cluster_up;
+                    } else {
+                        combine_cluster(&mut clusters, &mut clustermap, cluster_up, cluster_left);
+                        cluster_up = cluster_left;
+                    }
+                }
+                if v {
+                    rect.add_x_y(x as i32, y as i32);
+                    if v_up {
+                        clustermap.set_pixel(x as usize, y as usize, cluster_up);
+                        clusters[cluster_up as usize].cluster.add(pos);
+                    } else if v_left {
+                        clustermap.set_pixel(x as usize, y as usize, cluster_left);
+                        clusters[cluster_left as usize].cluster.add(pos);
+                    } else if v_up_left && diagonal {
+                        clustermap.set_pixel(x as usize, y as usize, cluster_up_left);
+                        clusters[cluster_up_left as usize].cluster.add(pos);
+                    } else {
+                        let mut newcluster = Cluster::default();
+                        newcluster.add(pos);
+                        if (clusterindex as usize) < clusters.len() {
+                            clusters[clusterindex as usize].cluster = newcluster;
+                        } else {
+                            clusters.push( ClusterPack { cluster: newcluster, color: col });
+                        }
+                        clustermap.set_pixel(x as usize, y as usize, clusterindex);
+                        clusterindex += 1;
+                        if clusterindex == MonoImageItem::max_value() {
+                            panic!("overflow");
+                        }
+                    }
+                }
+            }
+        }
+
+        pub fn combine_cluster(
+            clusters: &mut Vec<ClusterPack>,
+            clustermap: &mut MonoImage,
+            from: MonoImageItem,
+            to: MonoImageItem,
+        ) {
+            for o in clusters[from as usize].cluster.points.iter() {
+                clustermap.set_pixel(o.x as usize, o.y as usize, to);
+            }
+            let mut drain = std::mem::replace(&mut clusters[from as usize].cluster.points, Vec::new());
+            clusters[to as usize].cluster.points.append(&mut drain); // drain is now empty
+            let rect = clusters[from as usize].cluster.rect;
+            clusters[to as usize].cluster.rect.merge(rect);
+        }
+
+        let mut map = HashMap::new();
+        let clusters : Vec< ( usize, ClusterPack ) > = clusters
+        .into_iter()
+        .enumerate()
+        .filter(| ( _, p ) | { p.cluster.size() != 0 } )
+        .collect();
+
+        // Map the id in the `clustermap`` to the current id in `clusters`
+        for ( id1, ( id2, c ) ) in clusters.iter().enumerate()
+        {
+            map.insert( *id2, id1 );
+        }
+
+        // Transfer values from `clustermap` to `clustermapbig`
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let v = self.get_pixel_safe(x as i32, y as i32);
+                if v
+                {
+                    let vi = clustermap.get_pixel( x, y );
+                    if let Some( id ) = map.get( &( vi as usize ) )
+                    {
+                        let id = *id as u32;
+                        clustermapbig.set_pixel( x, y, id + cluster_index_offset );
+                    }
+                }
+            }
+        }
+
+        let clusters = clusters.into_iter().map( | ( _, c ) | c ).collect();
+
+        ClustersPack { clusters, rect }
     }
 }
 
