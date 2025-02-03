@@ -104,7 +104,7 @@ impl Cluster {
             x: self.rect.left,
             y: self.rect.top,
         };
-        Self::image_to_compound_path(
+        Self::image_to_compound_path_mine(
             &origin,
             &self.to_binary_image(),
             mode,
