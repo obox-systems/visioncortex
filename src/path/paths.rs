@@ -2,6 +2,7 @@ use std::fmt::{Debug, Write};
 use std::ops::{Add, AddAssign, Index, IndexMut, Mul, Range, RangeFrom, RangeInclusive, Sub};
 
 use crate::{BinaryImage, Point2, PointF64, PointI32, Shape, ToSvgString};
+use super::norm;
 use super::{PathSimplify, PathSimplifyMode, PathWalker, smooth::SubdivideSmooth, reduce::reduce};
 
 #[derive(Clone, Debug, Default)]
@@ -289,7 +290,189 @@ impl PathI32 {
     /// 
     /// First remove staircases then simplify by limiting penalties.
     pub fn simplify(&self, clockwise: bool) -> Self {
+        let mut path2 = vec![ PointI32::default(); self.path.len() ];
+        {
+            let path = &self.path;
+            let normalize = | d : &mut PointI32 |
+            {
+                if d.x == 0
+                {
+                    d.y /= d.y.abs();
+                }
+                else if d.y == 0 {
+                    d.x /= d.x.abs();
+                }
+            };
+            let dir_map = | mut d1 : PointI32, mut d2 : PointI32 |
+            {   
+                normalize( &mut d1 );
+                normalize( &mut d2 );
+                match ( d1.x, d1.y, d2.x, d2.y )
+                {
+                    ( 0, -1, 1, 0 ) => PointI32::new( 1, 1 ), // ↑ →
+                    ( 1, 0, 0, -1 ) => PointI32::new( 1, 1 ), // → ↑
+                    ( 1, 0, 0, 1 ) => PointI32::new( -1, 1 ), // → ↓
+                    ( 0, 1, 1, 0 ) => PointI32::new( -1, 1 ), // ↓ →
+                    ( 0, 1, -1, 0 ) => PointI32::new( -1, -1 ), // ↓ ←
+                    ( -1, 0, 0, 1 ) => PointI32::new( -1, -1 ), // ← ↓
+                    ( -1, 0, 0, -1 ) => PointI32::new( 1, -1 ), // ← ↑
+                    ( 0, -1, -1, 0 ) => PointI32::new( 1, -1 ), // ↑ ←
+                    ( x1, y1, x2, y2 ) => { panic!( "Not possible: {},{} | {},{}", x1, y1, x2, y2 ); }
+                }
+            };
+            let mut curr = 1;
+
+            while curr < path.len() - 1
+            {
+                let p0 = path[ curr - 1 ];
+                let p1 = path[ curr ];
+                let p2 = path[ curr + 1 ];
+
+                //println!("Prev: {:?} | Curr: {:?} | Next: {:?}", p0, p1, p2 );
+
+                let mut offset = dir_map( p1 - p0, p2 - p1 );
+                //println!("New P: {:?}", p1 + offset);
+                // offset.x *= -1;
+                // offset.y *= -1;
+                path2[ curr ] = p1 + offset;
+
+                curr += 1;
+            }
+
+            let p2 = path[ 1 ];
+            let p1 = path[ 0 ];
+            let p0 = path[ path.len() - 2 ];
+
+            let new_p = p1 + dir_map( p1 - p0, p2 - p1 );
+            path2[ 0 ] = new_p;
+            let len = path2.len();
+            path2[ len - 1 ] = new_p;
+        }
+        path2.reverse();
+        let path2 = PathSimplify::remove_staircase( &PathI32{ path: path2 }, !clockwise);
         let path = PathSimplify::remove_staircase(self, clockwise);
+
+        // println!("New cluster");
+        // for p in path2.path.iter()
+        // {
+        //     println!("Point: {:?}", p );
+        // }
+        {
+
+            let cw =  PathSimplify::limit_penalties(&path);
+            let ccw = PathSimplify::limit_penalties(&path2);
+
+            //return ccw;
+
+            if ccw.len() >= 3 
+            {
+
+                let cross = | o : PointI32, a : PointI32, b : PointI32 |
+                {
+                    ( a.x - o.x ) * ( b.y - o.y ) - ( a.y - o.y ) * ( b.x - o.x )
+                };
+
+                let mut i1 = 0;
+                let mut i2 = ccw.path.len() as i32 - 1;
+
+                let distance_squared = | p1 : &PointI32, p2 : &PointI32 |
+                {
+                    ( p1.x - p2.x ).pow( 2 ) + ( p1.y - p2.y ).pow( 2 )
+                };
+
+                let mut result = Vec::new();
+                result.push( cw.path[ i1 ] );
+                i1 += 1;
+                i2 -= 1;
+                while i1 < cw.path.len()  && i2 > 0
+                {
+                    let start = *result.last().unwrap();
+                    let mut end1 = cw.path[ i1 ];
+                    let mut end2 = ccw.path[ i2 as usize ];
+
+                    let mut length1 = distance_squared( &start, &end1 );
+                    let mut length2 = distance_squared( &start, &end2 );
+
+                    // if length1 > length2
+                    // {
+                    //     while length2 < length1 && i2 != 0
+                    //     {
+                    //         if cross( start, end1, end2 ) < 0
+                    //         {
+                    //             result.push( end2 );
+                    //         }
+                    //         i2 -= 1;
+                    //         end2 = ccw.path[ i2 as usize ];
+                    //         length2 = distance_squared( &start, &end2 );
+                    //     }
+                    //     i1 += 1;
+                    //     result.push( end1 );
+                    // }
+                    // else 
+                    // {
+                    //     while length1 < length2 && i1 < cw.path.len() - 1
+                    //     {
+                    //         if cross( start, end2, end1 ) < 0
+                    //         {
+                    //             result.push( end1 );
+                    //         }
+                    //         i1 += 1;
+                    //         end1 = cw.path[ i1 ];
+                    //         length1 = distance_squared( &start, &end1 );
+                    //     }
+                    //     i2 -= 1;
+                    //     result.push( end2 );                    
+                    // }
+
+                    if length1 > length2
+                    {
+                        while length2 < length1 && i2 != 0
+                        {
+                            i2 -= 1;
+                            end2 = ccw.path[ i2 as usize ];
+                            length2 = distance_squared( &start, &end2 );
+                        }
+                        i1 += 1;
+                        result.push( end1 );
+                    }
+                    else 
+                    {
+                        while length1 < length2 && i1 < cw.path.len() - 1
+                        {
+                            i1 += 1;
+                            end1 = cw.path[ i1 ];
+                            length1 = distance_squared( &start, &end1 );
+                        }
+                        i2 -= 1;
+                        result.push( end2 );                    
+                    }
+                }
+
+                if *result.last().unwrap() != ccw[ 0 ]
+                {
+                    result.push( ccw[ 0 ] );
+                }
+
+                // println!(" Path mine: {} ", result.len());
+                // println!(" Point: {:?}", result[ 0 ] );
+                // println!(" Point: {:?}", result[ 1 ] );
+                // println!(" Point: {:?}", result[ 2 ] );
+
+                {
+                    // println!(" Path new ");
+                    // println!(" Clockwise: {}, counter clockwise: {}", cw.len(), ccw.len() );
+                    // println!(" Clock: {:?}, Count: {:?}", cw.path[ 0 ], ccw.path[ ccw.len() - 1] );
+                    // println!(" Clock: {:?}, Count: {:?}", cw.path[ 1 ], ccw.path[ ccw.len() - 2] );
+                    // println!(" Clock: {:?}, Count: {:?}", cw.path[ 2 ], ccw.path[ ccw.len() - 3] );
+
+                    //println!(" First: {:?}, Last: {:?}", cw.path[ 0 ], cw.path[ cw.len() - 1] );
+
+                }
+
+                return PathI32 { path: result };
+            }
+        }
+
         PathSimplify::limit_penalties(&path)
     }
 
@@ -302,7 +485,7 @@ impl PathI32 {
     pub fn image_to_path(image: &BinaryImage, clockwise: bool, mode: PathSimplifyMode) -> PathI32 {
         match mode {
             PathSimplifyMode::Polygon => {
-                let path = Self::image_to_path_baseline(image, clockwise);
+                let mut path = Self::image_to_path_baseline(image, clockwise);
                 path.simplify(clockwise)
             },
             // Otherwise

@@ -200,9 +200,10 @@ impl Cluster {
         }
         let mut paths = vec![];
         for (i, (image, offset)) in boundaries.iter_mut().enumerate() {
-            let mut path = PathI32::image_to_path(image, i == 0, mode);
+            let mut path = PathI32::image_to_path(image, true, mode);
             path.offset(offset);
             if !path.is_empty() {
+                if i != 0 { path.path.reverse(); }
                 paths.push(path);
             }
         }
@@ -271,12 +272,10 @@ impl Cluster {
             let mut spline = Spline::from_image(
                 image, true, corner_threshold, Self::OUTSET_RATIO, segment_length, max_iterations, splice_threshold
             );
+
             spline.offset(&offset.to_point_f64());
             if !spline.is_empty() {
-                if i != 0
-                {   
-                    spline.points.reverse();
-                }
+                if i != 0 { spline.points.reverse(); }
                 splines.push(spline);
             }
         }
