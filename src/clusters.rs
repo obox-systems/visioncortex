@@ -12,22 +12,10 @@ pub struct Cluster {
     pub rect: BoundingRect,
 }
 
-#[derive(Default)]
-pub struct ClusterPack {
-    pub cluster: Cluster,
-    pub color: crate::Color,
-}
-
 /// A collection of clusters
 #[derive(Default)]
 pub struct Clusters {
     pub clusters: Vec<Cluster>,
-    pub rect: BoundingRect,
-}
-
-#[derive(Default)]
-pub struct ClustersPack {
-    pub clusters: Vec<ClusterPack>,
     pub rect: BoundingRect,
 }
 
@@ -452,8 +440,8 @@ impl BinaryImage {
         Clusters { clusters, rect }
     }
 
-    pub fn to_clusters_big(&self, diagonal: bool, clustermapbig : &mut MonoImageBig, cluster_index_offset : u32, col : crate::Color ) -> ClustersPack {
-        let mut clusters = Vec::<ClusterPack>::new();
+    pub fn to_clusters_big(&self, diagonal: bool, clustermapbig : &mut MonoImageBig, cluster_index_offset : u32 ) -> Clusters {
+        let mut clusters = Vec::<Cluster>::new();
         let mut rect = BoundingRect::default();
         let mut clustermap = MonoImage::new_w_h(self.width, self.height);
         let mut clusterindex: MonoImageItem = 0;
@@ -468,7 +456,7 @@ impl BinaryImage {
                 let mut cluster_left = if x > 0 { clustermap.get_pixel(x as usize-1, y as usize) } else { 0 };
                 let cluster_up_left = if x > 0 && y > 0 { clustermap.get_pixel(x as usize-1, y as usize-1) } else { 0 };
                 if (v || diagonal) && v_up && v_left && cluster_left != cluster_up {
-                    if clusters[cluster_left as usize].cluster.size() <= clusters[cluster_up as usize].cluster.size() {
+                    if clusters[cluster_left as usize].size() <= clusters[cluster_up as usize].size() {
                         combine_cluster(&mut clusters, &mut clustermap, cluster_left, cluster_up);
                         if clusterindex > 0 &&
                             cluster_left == clusterindex - 1 &&
@@ -486,20 +474,20 @@ impl BinaryImage {
                     rect.add_x_y(x as i32, y as i32);
                     if v_up {
                         clustermap.set_pixel(x as usize, y as usize, cluster_up);
-                        clusters[cluster_up as usize].cluster.add(pos);
+                        clusters[cluster_up as usize].add(pos);
                     } else if v_left {
                         clustermap.set_pixel(x as usize, y as usize, cluster_left);
-                        clusters[cluster_left as usize].cluster.add(pos);
+                        clusters[cluster_left as usize].add(pos);
                     } else if v_up_left && diagonal {
                         clustermap.set_pixel(x as usize, y as usize, cluster_up_left);
-                        clusters[cluster_up_left as usize].cluster.add(pos);
+                        clusters[cluster_up_left as usize].add(pos);
                     } else {
                         let mut newcluster = Cluster::default();
                         newcluster.add(pos);
                         if (clusterindex as usize) < clusters.len() {
-                            clusters[clusterindex as usize].cluster = newcluster;
+                            clusters[clusterindex as usize] = newcluster;
                         } else {
-                            clusters.push( ClusterPack { cluster: newcluster, color: col });
+                            clusters.push(newcluster);
                         }
                         clustermap.set_pixel(x as usize, y as usize, clusterindex);
                         clusterindex += 1;
@@ -512,29 +500,29 @@ impl BinaryImage {
         }
 
         pub fn combine_cluster(
-            clusters: &mut Vec<ClusterPack>,
+            clusters: &mut Vec<Cluster>,
             clustermap: &mut MonoImage,
             from: MonoImageItem,
             to: MonoImageItem,
         ) {
-            for o in clusters[from as usize].cluster.points.iter() {
+            for o in clusters[from as usize].points.iter() {
                 clustermap.set_pixel(o.x as usize, o.y as usize, to);
             }
-            let mut drain = std::mem::replace(&mut clusters[from as usize].cluster.points, Vec::new());
-            clusters[to as usize].cluster.points.append(&mut drain); // drain is now empty
-            let rect = clusters[from as usize].cluster.rect;
-            clusters[to as usize].cluster.rect.merge(rect);
+            let mut drain = std::mem::replace(&mut clusters[from as usize].points, Vec::new());
+            clusters[to as usize].points.append(&mut drain); // drain is now empty
+            let rect = clusters[from as usize].rect;
+            clusters[to as usize].rect.merge(rect);
         }
 
         let mut map = HashMap::new();
-        let clusters : Vec< ( usize, ClusterPack ) > = clusters
+        let clusters : Vec< ( usize, Cluster ) > = clusters
         .into_iter()
         .enumerate()
-        .filter(| ( _, p ) | { p.cluster.size() != 0 } )
+        .filter(| ( _, p ) | { p.size() != 0 } )
         .collect();
 
         // Map the id in the `clustermap`` to the current id in `clusters`
-        for ( id1, ( id2, c ) ) in clusters.iter().enumerate()
+        for ( id1, ( id2, _ ) ) in clusters.iter().enumerate()
         {
             map.insert( *id2, id1 );
         }
@@ -557,7 +545,7 @@ impl BinaryImage {
 
         let clusters = clusters.into_iter().map( | ( _, c ) | c ).collect();
 
-        ClustersPack { clusters, rect }
+        Clusters { clusters, rect }
     }
 }
 
